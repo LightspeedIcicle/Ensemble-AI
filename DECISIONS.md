@@ -445,6 +445,48 @@ by the core pipeline), while the exploit requires ChromaDB's HTTP server mode
 dismissed as tolerable risk. **If server mode is ever added, this no longer holds —
 upgrade chromadb immediately.** When a fixed version (`> 1.5.9`) ships, bump it.
 
+## Testing
+
+**Run the change, then write down what it does — in that order**
+
+A process rule, adopted because the opposite order failed three times in one
+session:
+
+- This file claimed low temperature made routing reproducible. It flips at 0.0.
+  The claim was written, committed, and pushed before anyone ran it.
+- `LOCAL_MODEL` was pointed at `ensemble-local` and the `ollama create` step was
+  documented in the README. The model was never built. `master` was broken for
+  several commits and it surfaced only when someone tried to run the thing.
+- The first fix for the router's contradictory rules introduced a new
+  contradiction, sending a medical question to an 8B model 1 run in 4. It was
+  caught because the fix was measured before it was committed.
+
+Every claim in this file that was measured held up. Both that were asserted were
+wrong. That is not carelessness, and noticing harder would not have prevented it:
+a plausible explanation for why a change *should* work is exactly as easy to write
+when the change does not work. Prose has no failure mode. That is the whole problem
+with it as evidence.
+
+The standard:
+
+- **A behavioral change ships with the run that demonstrates it.** Not a
+  description of the run. The run.
+- **The test must be able to fail.** The first routing test used a query that hit
+  four ALWAYS-escalate triggers at once; it passed at every temperature and proved
+  nothing. A test that cannot separate the hypotheses is decoration with a
+  checkmark on it.
+- **State the limits next to the result.** "10/10 across 5 runs, one model, one
+  session, hand-labelled" is a finding. "Fixed" is a claim.
+- **When a measurement contradicts something already written here, correct the
+  entry and mark it corrected.** This log is worth something because it is
+  trustworthy, not because it is consistent. An entry that was wrong and says so is
+  worth more than one that was quietly rewritten.
+
+The cheap version of this rule: if you cannot run it, say you did not run it.
+Everything above is downstream of that.
+
+---
+
 ## The tiebreaker
 
 **A correct answer, carrying the context needed to trust it, beats a cheap one.**
@@ -493,6 +535,7 @@ does).
 
 ## Going forward
 
+- Run the change before writing down what it does; the test must be able to fail
 - A correct answer with the context to trust it beats a cheap one — sufficiency,
   not length, is the bar
 - Keep model IDs and sampling temperatures centralized in `core/clients.py`
