@@ -15,12 +15,33 @@ answer to a hard question) is worse than the cost of over-escalating (a few extr
 API tokens). Any parse failure in routing defaults to escalate, so the system
 fails safe.
 
-**Prompt compression before escalation**
-A verbose prompt is rewritten into token-efficient shorthand by the local model
-*before* it reaches the paid APIs. Cheap local tokens buy expensive API tokens.
-The original prompt is retained and used for the final consolidation step so the
-answer still reads naturally — compression is an internal optimization, not
-something the end user sees.
+**Compression runs local-to-local only — never in front of the council** *(revised)*
+The original design compressed every prompt *before* routing, on the theory that
+cheap local tokens buy expensive API tokens. A review of the pipeline surfaced the
+flaw and the design was inverted. Two reasons, and the second is the one that
+settles it:
+
+- *It inverted the quality gradient.* Compression put the weakest model in the
+  system in charge of deciding what the strongest models were allowed to see. A
+  nuanced question, aggressively rewritten by an 8B local model, reaches the
+  council already damaged — and no amount of frontier reasoning recovers detail
+  that was deleted before it was sent.
+- *The economics never supported it.* Input tokens are the cheap direction.
+  Trading answer quality for a fractional saving on the cheap side of the ledger
+  is a bad trade at any volume. The real cost saving here comes from the router
+  declining to make the call at all — not from shaving tokens off calls we make.
+
+The intermediate fix on offer was "bypass compression when the router escalates."
+That was rejected as a patch: it still leaves the *router* reading a lossy prompt
+while judging how hard the question is, which is the one input that decision
+depends on. Compression now sits behind the router, on the local branch only,
+where both ends of the handoff are the same model — and is skipped entirely below
+`COMPRESS_MIN_TOKENS`, under which there is no context pressure to relieve and
+compression is pure downside.
+
+The stage kept its name and lost its original justification. That is the honest
+outcome: a feature can survive a review and still turn out to have been built for
+a reason that doesn't hold.
 
 **A council of two models, not one**
 Escalated queries are answered by Claude *and* Gemini concurrently
@@ -46,11 +67,37 @@ same fact from being stored twice.
 
 ---
 
+## Sampling
+
+**Local temperature is set per call, not per model**
+The local model does two jobs with opposite requirements. Routing, dedup, and
+compression are *evaluation* tasks: the same input must produce the same verdict
+on every run, or gate decisions flip between runs and the pipeline stops being
+reproducible. Answering is a *generation* task, where some variety is fine and
+even desirable. Ollama accepts sampling options per request, so one model serves
+both roles — `TEMP_DETERMINISTIC` (0.2) for evaluation, `TEMP_GENERATIVE` (0.7)
+for answers. Both live in `core/clients.py`, next to the model IDs they belong to.
+
+This corrects a real defect rather than a stylistic one: a router sampling at 0.9
+is a router that contradicts itself, sending the same query down different
+branches on different runs, and that is invisible until you try to reproduce a
+result.
+
+**Two Modelfiles, not one**
+`ensemble.Modelfile` defines the pipeline's local model: persona-free,
+near-greedy, public, built with `ollama create ensemble-local`. Conversational or
+personal models live in their own Modelfile, which `.gitignore` excludes by
+default. These are different artifacts with different requirements — a model tuned
+for warmth and character makes an unreliable judge — and only one of them belongs
+in a repository about a pipeline.
+
+---
+
 ## Model choices
 
 | Role | Model | Why |
 |------|-------|-----|
-| Local | dolphin-llama3 | Runs free via Ollama; good enough for compression, routing, dedup, and simple answers |
+| Local | ensemble-local (dolphin-llama3) | Runs free via Ollama; good enough for compression, routing, dedup, and simple answers |
 | Council member | Claude Sonnet 5 | Fast, capable frontier answerer |
 | Council member | Gemini 3.5 Flash | Independent second opinion from a different lab |
 | Judge | Claude Opus 4.8 | Highest-tier reasoning for refereeing and validation |
@@ -85,12 +132,89 @@ expects structured output routes through it.
 
 ---
 
+## Retrieval and ingestion
+
+**Chunking respects boundaries — and chunks may not grow**
+`memory.py` originally sliced text every 1000 characters with no regard for
+content, which cuts sentences, formulas, and code blocks in half; retrieval then
+returns fragments that begin mid-thought. Chunks are now split at the nearest
+natural boundary (paragraph → line → sentence → clause → word) with a
+200-character overlap, so a fact spanning a boundary survives intact in at least
+one chunk.
+
+The non-obvious part is the ceiling. `all-MiniLM-L6-v2` silently truncates its
+input at ~256 tokens. At roughly four characters per token, the existing
+1000-character chunk size already sits at ~250 — coincidentally right at the
+limit. So the intuitive follow-up ("we're adding overlap, so let's use bigger
+chunks") would make retrieval *worse*, and worse invisibly: the embedder drops
+each chunk's tail with no error, and the resulting vector describes only the
+chunk's opening. `CHUNK_SIZE` cannot be raised without changing the embedder.
+The constant carries this warning in the code, because the failure mode leaves no
+trace at runtime.
+
+Re-chunking also changes the fragment count per file, so ingestion deletes a
+file's existing fragments before re-adding them. `upsert` alone would strand
+orphans from the previous scheme in the collection.
+
+**arXiv ingestion stays sequential and slow — deliberately**
+A review recommended converting the harvester to `aiohttp` to "rip down entire
+libraries in seconds." This was rejected and the opposite implemented. arXiv's API
+terms ask for roughly one request every three seconds on a single connection;
+parallelising would get the client rate-limited or blocked, and it abuses a free
+service this project depends on. The observation behind the advice — synchronous
+is slow — is true and irrelevant: this is a background batch job, and background
+batch jobs are allowed to be slow. Delays were raised from 1–2s to 3s. If bulk
+volume is ever genuinely needed, the answer is arXiv's real bulk channels (OAI-PMH
+for metadata, S3 requester-pays for full text), not hammering the public API.
+
+**Ingestion stays manual until an evaluation gate exists**
+Automating the harvester would mean unattended arXiv text flowing into the vector
+store the local model retrieves from. Combined with any self-modification
+authority, that is a prompt-injection surface feeding the component that approves
+its own changes. Manual ingestion *is* the gate until a real one is built. This is
+the reason automation is deferred — not inertia.
+
+**Personal keywords are gitignored, not committed**
+`harvester.py`'s keyword list is public and contains only terms arXiv actually
+indexes. Personal or exploratory search terms belong in `keywords.local.txt`,
+which `.gitignore` excludes and the harvester merges at runtime when present. A
+public repository is a permanent record; anything that shouldn't live in one
+forever shouldn't go into one at all.
+
+---
+
+## Deferred deliberately
+
+**Local Ollama calls stay synchronous**
+A review rated the blocking `ollama.chat` calls High severity: they hold the event
+loop while Claude and Gemini run under `asyncio.gather`. The diagnosis is right and
+the severity is not. Blocking the loop only costs something when other work needs
+the loop, and this pipeline is single-user and mostly sequential — local synthesis
+runs *after* the gather resolves. That makes it a hygiene issue, not a bottleneck.
+It becomes real if local calls ever need to run *while* cloud calls are in flight,
+or if streaming is added. The fix (`ollama.AsyncClient`, or `run_in_executor` as
+already used for the external APIs) is understood and deferred on purpose rather
+than missed. Recorded here so the next reader doesn't re-derive it.
+
+---
+
 ## Behavior notes
 
 - In the original `phase6`, the local model saw the accumulated master prompt
   during *routing* as well as answering. In the refactor, the master prompt is
   injected only on the local-*answer* path; routing stays uncontaminated by
   accumulated knowledge. This was an intentional correction during the refactor.
+
+- `harvester.py`'s `KEYWORDS` entries need their trailing commas. Python silently
+  concatenates adjacent string literals, so a missing comma doesn't raise — it
+  fuses two keywords into one term that matches nothing, and the harvester
+  cheerfully reports success while searching for a string that cannot exist. Two
+  such fusions were live (19 declared keywords parsed as 13); both are fixed and
+  the list now carries a comment so the next edit doesn't reintroduce a third.
+
+- `knowledge.persist()` takes the original prompt rather than a compressed one for
+  its topic label. It used to borrow the compressed prompt, which the escalation
+  path no longer produces; a truncation of the original serves the same purpose.
 
 ---
 
@@ -113,6 +237,10 @@ upgrade chromadb immediately.** When a fixed version (`> 1.5.9`) ships, bump it.
 
 ## Going forward
 
-- Keep model IDs centralized in `core/clients.py`
+- Keep model IDs and sampling temperatures centralized in `core/clients.py`
+- Never send a compressed prompt to a frontier model
+- Never raise `CHUNK_SIZE` without changing the embedder
+- Keep personal data out of the public repo — `keywords.local.txt`, not `KEYWORDS`
 - Include a brief **why** in commit messages, not just **what**
-- Update this file when a non-obvious decision is made
+- Update this file when a non-obvious decision is made — including the ones where
+  the conclusion was "don't do the thing that was recommended"
