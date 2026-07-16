@@ -50,6 +50,28 @@ cross-validation: where they agree, confidence is high; where they disagree or
 one raises a unique point, that becomes something to verify rather than something
 to blindly trust.
 
+**The judge is three roles with three constants, not one**
+`compare`, `monitor`, and `consolidate` each read their own model constant. They
+previously all read a single `JUDGE_MODEL`, which meant the "roles can be re-tuned
+in one place" claim below was aspirational: re-tiering one role required editing a
+stage module, exactly what centralizing the IDs was supposed to prevent.
+
+They are split because they are different jobs with different requirements.
+`compare` is a structural diff — careful reading, no adjudication. `monitor` is
+fact-checking, which needs real world knowledge and is the most
+capability-sensitive of the three. `consolidate` writes the answer a human reads.
+All three default to the top tier; the split exists so that can be tested rather
+than assumed.
+
+The obvious cost optimization here is to merge `compare` and `monitor` into one
+judge call, which removes an intermediate JSON round-trip the pipeline generates
+at output-token prices only to read back at input-token prices. It was measured
+and **rejected**: merging saves 21% of an escalated query, while cutting the dead
+fields and re-tiering `compare` saves 20% — a difference of $0.0012 per query.
+Collapsing two independently-tunable roles permanently, to save eight hundredths
+of a cent, is a bad trade. The cheaper option is only available *because* the roles
+are separate stages.
+
 **Separate judge from council members**
 The comparison, validation, and consolidation steps use a distinct, higher-tier
 model (Opus 4.8) rather than reusing one of the answering models. The referee
@@ -64,6 +86,50 @@ prompt (which primes future local answers) requires explicit user confirmation.
 This keeps the accumulated long-term memory curated rather than letting the
 system silently rewrite its own priming context. A local dedup check prevents the
 same fact from being stored twice.
+
+---
+
+## Cost
+
+**Where the money actually is: judge output tokens**
+An escalated query costs roughly $0.145 at list prices, and ~82% of that is Opus
+generating output at $25/M across three judge calls. The user's own prompt is
+**0.08%** of the query. This is worth stating plainly because it kills a whole
+family of intuitive optimizations:
+
+- *Compressing the prompt* targets 0.4% of the query. See the compression entry
+  above — it was removed from the escalation path for quality reasons, but even if
+  it had been free, it was aimed at a rounding error.
+- *Shorthand — dropping vowels* (`"Hello how are you?"` → `"Hllo hw r u?"`) makes
+  it **worse**. Billing is per token, not per character, and tokenizers are
+  compression tables built from real text: `"Hello"` is one token, `"Hllo"` is
+  three (`H` + `l` + `lo`). Measured across sample sentences, vowel-dropped
+  shorthand cost **+76% tokens** for 30% fewer characters. Plain English is
+  already the compressed form.
+- *Prompt caching* silently does nothing here. `claude-opus-4-8` has a
+  **4096-token minimum cacheable prefix**; the fixed instruction preambles on the
+  judge calls are 48 and 77 tokens. Adding `cache_control` would not error — it
+  would just never cache, and `cache_read_input_tokens` would sit at zero forever.
+
+The levers that do work, in order: route more queries local (a local answer costs
+$0.00, and the router's escalation bias is the single largest cost decision in the
+system); tighten the `max_tokens` ceilings; stop generating fields nothing reads;
+re-tier `compare`.
+
+**Don't request output nothing reads**
+`monitor` asked the judge for `validated[].source` and `validated[].verdict`.
+Both `consolidate` and `knowledge.persist` do `[v["item"] for v in validated]` —
+only `item` was ever read, so two fields per validated claim were generated at
+$25/M, parsed, and dropped. They are no longer requested. If a field isn't read,
+it isn't in the schema.
+
+`removed` was the same shape of waste with the opposite fix. The judge explains
+why it rejected each claim, and the pipeline called `len()` on the list and threw
+the contents away. But a claim one council member asserted and the judge ruled
+false is the most interesting artifact this whole pipeline produces — it is
+cross-validation catching a hallucination in the act, which is the project's entire
+premise. That output was already paid for and simply wasn't shown. It is now
+printed. Not a saving; a waste converted into the headline feature.
 
 ---
 
@@ -156,6 +222,42 @@ Re-chunking also changes the fragment count per file, so ingestion deletes a
 file's existing fragments before re-adding them. `upsert` alone would strand
 orphans from the previous scheme in the collection.
 
+**Retrieval is wired to the local branch only**
+`memory.py` built a vector store that nothing queried — `recall()` was defined and
+never called, so the harvester and the embedding index fed a knowledge base that
+never reached the request path. `core/retrieval.py` closes that edge, on the local
+branch only.
+
+Not on the escalation path, deliberately. The council members are frontier models
+with their own knowledge; handing them passages retrieved by a 250-token-chunk
+MiniLM index is more likely to narrow their answer than improve it. The local
+model is the one that benefits from the crutch.
+
+Retrieval degrades to nothing rather than failing. `memory.py` is imported lazily
+and every failure is swallowed: it pulls in chromadb and sentence-transformers and
+constructs a `PersistentClient` at import time, and a missing store is a normal
+state (fresh clone, no ingest run), not an error. The pipeline answers unprimed
+instead of refusing to start.
+
+**Retrieved passages are framed as data, never as instructions**
+Wiring retrieval in means text this project did not write — arXiv PDFs the
+harvester downloaded — now reaches the local model's system prompt. That is a
+prompt-injection surface, and it is worth being explicit about what makes it
+tolerable rather than discovering it later:
+
+- Passages are fenced in `<retrieved>` tags and explicitly labelled as reference
+  data the model should consult and not obey.
+- The master prompt leads; retrieved text is appended after it, never before.
+- Ingestion is manual, so nothing enters the store without a human running the
+  harvester.
+- The local branch returns before stage 7, so a local answer never reaches
+  `knowledge.persist()`. Retrieved text cannot round-trip into the master prompt.
+
+The last two are the load-bearing ones. **If ingestion is ever automated, or the
+local branch ever persists its answers, this stops being contained** — untrusted
+text would then flow into the store, out through retrieval, and back into the
+priming context for every future local answer. Re-evaluate before changing either.
+
 **arXiv ingestion stays sequential and slow — deliberately**
 A review recommended converting the harvester to `aiohttp` to "rip down entire
 libraries in seconds." This was rejected and the opposite implemented. arXiv's API
@@ -235,8 +337,33 @@ by the core pipeline), while the exploit requires ChromaDB's HTTP server mode
 dismissed as tolerable risk. **If server mode is ever added, this no longer holds —
 upgrade chromadb immediately.** When a fixed version (`> 1.5.9`) ships, bump it.
 
+## The tiebreaker
+
+**When cost and information conflict, information wins.**
+
+This is not a platitude — it is the rule that decided most of the entries above,
+and it decided them against the cheaper option every time:
+
+- Compression was removed from the escalation path even though it "saved tokens,"
+  because the tokens it saved were a rounding error and the meaning it cost was not.
+- `compare` and `monitor` were not merged, because a 0.8% saving is not worth
+  permanently collapsing two roles that answer different questions.
+- `removed` is printed rather than trimmed to a count, because a hallucination
+  caught in the act is the most valuable thing this pipeline produces.
+
+The corollary is what makes the rule usable rather than sentimental: when a saving
+costs *no* information, take it without hesitation. `validated[].source` and
+`verdict` were deleted the moment it was clear nothing read them. A field nothing
+reads carries no information by definition, so the tiebreaker never fires.
+
+The cheap thing and the right thing are usually the same thing. This rule is for
+the cases where they aren't.
+
+---
+
 ## Going forward
 
+- When cost and information conflict, information wins
 - Keep model IDs and sampling temperatures centralized in `core/clients.py`
 - Never send a compressed prompt to a frontier model
 - Never raise `CHUNK_SIZE` without changing the embedder

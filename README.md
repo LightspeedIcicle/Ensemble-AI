@@ -73,17 +73,24 @@ multi-part research question. Ensemble AI addresses three problems at once:
 
 ### The council / judge split
 
-Two distinct roles, deliberately separated (configured in `core/clients.py`):
+Five roles, each independently assignable in `core/clients.py`:
 
-| Role | Model | Responsibility |
-|------|-------|----------------|
-| **Council member** | Claude Sonnet 5 | Answers the escalated query |
-| **Council member** | Gemini 3.5 Flash | Answers the escalated query (concurrently) |
-| **Judge** | Claude Opus 4.8 | Refereeing, validation, consolidation |
-| **Local** | dolphin-llama3 (Ollama) | Compression, routing, simple answers, dedup |
+| Role | Constant | Default | Responsibility |
+|------|----------|---------|----------------|
+| **Council member** | `CLAUDE_MODEL` | Claude Sonnet 5 | Answers the escalated query |
+| **Council member** | `GEMINI_MODEL` | Gemini 3.5 Flash | Answers it concurrently, independently |
+| **Judge — compare** | `COMPARE_MODEL` | Claude Opus 4.8 | Structural diff of the two answers |
+| **Judge — monitor** | `MONITOR_MODEL` | Claude Opus 4.8 | Validity + relevance fact-checking |
+| **Judge — consolidate** | `CONSOLIDATE_MODEL` | Claude Opus 4.8 | Writes the final answer |
+| **Local** | `LOCAL_MODEL` | ensemble-local | Routing, compression, simple answers, dedup |
 
-The judge is a higher tier than the members it referees — the validator should
-be at least as capable as those it judges.
+The judge is a higher tier than the members it referees — the validator should be
+at least as capable as those it judges. It is three constants rather than one
+because refereeing, fact-checking, and synthesis are different jobs with different
+capability requirements: `compare` reads carefully but adjudicates nothing, while
+`monitor` needs real world knowledge to rule on truth. Splitting them means a role
+can be re-tiered in one line without touching a stage module — see
+[DECISIONS.md](DECISIONS.md) for why they weren't merged instead.
 
 ---
 
@@ -98,19 +105,22 @@ Ensemble-AI/
 │   ├── helpers.py        # parse_json, estimate_tokens
 │   ├── router.py         # Stage 1 — local vs. escalate    (local)
 │   ├── compress.py       # Stage 2 — compression, local path only (local)
+│   ├── retrieval.py      # Stage 2b — RAG lookup, local path only (local)
 │   ├── council.py        # Stage 3-4 — fan-out + comparison (members + judge)
 │   ├── monitor.py        # Stage 5 — validation / filtering (judge)
 │   ├── consolidate.py    # Stage 6 — final answer synthesis (judge)
 │   └── knowledge.py      # Stage 7 — persistence + master-prompt promotion
-├── memory.py             # Auxiliary: ChromaDB vector store over knowledge/ (RAG)
+├── memory.py             # ChromaDB vector store over knowledge/ — indexer + recall
 ├── harvester.py          # Auxiliary: arXiv paper harvester → knowledge/
 └── requirements.txt
 ```
 
-`core/` is the pipeline. `memory.py` and `harvester.py` are standalone tools that
-feed the knowledge base and are not part of the request/response path — which is
-why `memory.py` configures its own embedding model rather than importing
-`core/clients.py` and inheriting a dependency on API keys it never uses.
+`core/` is the pipeline. `harvester.py` is a standalone tool run by hand.
+`memory.py` is both: `ingest_knowledge()` is run manually to index `knowledge/`,
+while `recall()` is read by `core/retrieval.py` on the local branch. It still
+configures its own embedding model rather than importing `core/clients.py`, so
+indexing a folder doesn't require the paid APIs' keys — and `core/retrieval.py`
+imports it lazily, so the pipeline runs whether or not a store has been built.
 
 ---
 
