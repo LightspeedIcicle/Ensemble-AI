@@ -16,6 +16,7 @@ import asyncio
 
 from core import knowledge
 from core.compress import maybe_compress
+from core.retrieval import recall_context, build_local_system
 from core.router import local_router, query_local
 from core.council import fan_out, compare_responses
 from core.monitor import monitor_discrepancies
@@ -50,9 +51,21 @@ async def run_pipeline(prompt):
         else:
             print("\n[Compression] Skipped — prompt is already small")
 
-        # Answer directly, primed with accumulated master-prompt knowledge.
+        # ── Stage 2b — Retrieve ───────────────────────────────────────────────
+        # Retrieval runs on the ORIGINAL prompt for the same reason routing does:
+        # the search query is what decides which passages come back, and a lossy
+        # rewrite degrades exactly that.
+        context = recall_context(prompt)
+        if context:
+            print(f"[Retrieval] {len(context)} chars of context recalled")
+        else:
+            print("[Retrieval] No context — answering unprimed")
+
+        # Answer directly, primed with accumulated master-prompt knowledge and
+        # anything the knowledge base had to say.
         print("[Local] Handling query locally...")
-        response = query_local(local_prompt, system=knowledge.load_master_prompt())
+        system = build_local_system(knowledge.load_master_prompt(), context)
+        response = query_local(local_prompt, system=system)
         print(f"\n--- LOCAL RESPONSE ---\n{response}")
         return
 
