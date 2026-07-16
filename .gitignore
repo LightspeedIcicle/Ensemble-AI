@@ -12,6 +12,10 @@ __pycache__/
 # Secrets and personal data
 *.Modelfile
 Modelfile*
+keywords.local.txt
+
+# ...except the pipeline's own model definition, which is public by design.
+!ensemble.Modelfile
 
 # ChromaDB
 chroma_db/
