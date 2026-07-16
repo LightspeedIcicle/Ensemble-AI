@@ -94,6 +94,23 @@ expects structured output routes through it.
 
 ---
 
+## Security
+
+**pydantic-settings bumped to 2.14.2 (GHSA-4xgf-cpjx-pc3j)**
+Dependabot flagged a moderate vulnerability in the pinned `pydantic-settings==2.14.1`:
+`NestedSecretsSettingsSource` followed symlinks outside `secrets_dir`, enabling
+local file read. Fixed by pinning the patched `2.14.2`.
+
+**chromadb critical (GHSA-f4j7-r4q5-qw2c / CVE-2026-45829) — dismissed as tolerable risk**
+A pre-authentication code injection ("ChromaToast") affects chromadb `<= 1.5.9`.
+No patched release exists yet — the latest on PyPI (`1.5.9`) is the top of the
+vulnerable range. It is not exploitable in this project: chromadb is used only via
+an embedded `PersistentClient` in `memory.py` (a standalone RAG tool, not imported
+by the core pipeline), while the exploit requires ChromaDB's HTTP server mode
+(`chroma run` / `HttpClient`), which this project never runs. The alert was
+dismissed as tolerable risk. **If server mode is ever added, this no longer holds —
+upgrade chromadb immediately.** When a fixed version (`> 1.5.9`) ships, bump it.
+
 ## Going forward
 
 - Keep model IDs centralized in `core/clients.py`
