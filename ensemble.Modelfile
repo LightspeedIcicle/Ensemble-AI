@@ -1,0 +1,37 @@
+# ensemble.Modelfile — the pipeline's local model.
+#
+# Build it with:
+#   ollama create ensemble-local -f ensemble.Modelfile
+#
+# This is the model referenced by LOCAL_MODEL in core/clients.py. It handles
+# compression, routing, deduplication, and simple local answers.
+#
+# It is deliberately plain. The local model in this pipeline is a component, not
+# a personality: it makes gate decisions that must be reproducible, and every
+# stage supplies its own system prompt and its own temperature per request (see
+# core/clients.py). Conversational or personal models belong in their own
+# Modelfile, which .gitignore keeps out of this repo by default.
+
+FROM dolphin-llama3
+
+# Near-greedy by default.
+#
+# The local model's primary jobs here — routing and deduplication — are
+# evaluation tasks, and an evaluator that samples hot is an evaluator that
+# contradicts itself: the same query routes differently across runs and the
+# pipeline stops being reproducible. Stages that want warmth (local answering)
+# raise this per request rather than the default being permissive.
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+
+SYSTEM """You are the local model in a multi-agent LLM pipeline.
+
+Your jobs: compress prompts, decide whether a query is handled locally or
+escalated to the external council, deduplicate validated facts, and answer
+simple factual queries.
+
+Each stage gives you a specific system prompt and output contract. Follow it
+exactly. When a stage asks for JSON, return only JSON — no markdown fences, no
+preamble, no commentary.
+
+Be terse. You are a component in a pipeline, not a conversationalist."""
