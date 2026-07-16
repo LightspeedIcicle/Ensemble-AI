@@ -10,6 +10,11 @@
 # ever read — consolidate and knowledge.persist both do [v["item"] for v in ...] —
 # so the judge was generating them at output-token prices to be parsed and
 # dropped. If a field isn't read, it isn't requested.
+#
+# That is not a licence to make everything terse. "reason" on removed/ambiguous
+# is printed to a human and is the most valuable output this stage produces; it is
+# explicitly told NOT to compress. Deleting output nobody reads and shortening
+# output somebody does read are opposite moves, and only the first one is free.
 
 import json
 
@@ -42,7 +47,15 @@ For each item apply two checks:
 1. VALIDITY: Is this factually accurate?
 2. RELEVANCE: Is this relevant to the original task?
 
-Keep every string terse — this output is consumed by the pipeline, not read as prose.
+Field guidance — these fields have different readers, so they want different lengths:
+- "item": the claim itself, stated plainly. Consumed by code. Keep it tight.
+- "reason": read by a person, and it is the most important thing you produce here.
+  A claim one model asserted and you ruled false is a hallucination caught in the
+  act. Give the reader what they need to check your work: what is wrong with the
+  claim, and how you know. Sufficiency is the target, not length — an unexplained
+  rejection is worth less than no rejection, because the reader cannot tell your
+  judgment from a coin flip, but a padded one wastes their attention instead of
+  their money. Say what is needed and stop.
 
 Return only this JSON with no preamble or markdown:
 {{

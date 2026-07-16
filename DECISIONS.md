@@ -339,7 +339,13 @@ upgrade chromadb immediately.** When a fixed version (`> 1.5.9`) ships, bump it.
 
 ## The tiebreaker
 
-**When cost and information conflict, information wins.**
+**A correct answer, carrying the context needed to trust it, beats a cheap one.**
+
+Not "more output is better" — that is a different and worse rule. The bar is
+*sufficiency*: everything the reader needs to act on the answer and to check it,
+and nothing past that. A padded answer misses the bar the same way a truncated one
+does; it just misses more expensively. Token cost is a real constraint and worth
+respecting. It simply loses this particular argument, every time.
 
 This is not a platitude — it is the rule that decided most of the entries above,
 and it decided them against the cheaper option every time:
@@ -356,14 +362,31 @@ costs *no* information, take it without hesitation. `validated[].source` and
 `verdict` were deleted the moment it was clear nothing read them. A field nothing
 reads carries no information by definition, so the tiebreaker never fires.
 
-The cheap thing and the right thing are usually the same thing. This rule is for
-the cases where they aren't.
+These are not close in weight. A council, a referee, and a fact-checking gate are
+an expensive way to answer a question, and the only thing all that machinery buys
+is a correct answer you can tell is correct. Spending it and then trimming the
+result to save tokens is paying for the whole apparatus and throwing away its
+output — backwards no matter how the arithmetic comes out.
+
+**The near-miss worth recording.** Deleting the dead fields and shortening the
+live ones look like the same move — both are "ask the judge for fewer tokens" —
+and they were briefly made together. `monitor` was given a blanket instruction to
+keep every string terse "because this output is consumed by the pipeline, not read
+as prose." That was false in the same commit that wrote it: `removed[].reason` had
+just been made visible, so the judge was being told to compress the hallucination
+explanation that had *just* been promoted to the headline feature. They are
+opposite moves. Deleting output nobody reads is free; shortening output somebody
+reads is a cost disguised as a saving, and it disguises well precisely because the
+token arithmetic looks identical. `monitor` now gives per-field guidance instead:
+tight for `item` (code reads it), explicitly uncompressed for `reason` (a person
+does).
 
 ---
 
 ## Going forward
 
-- When cost and information conflict, information wins
+- A correct answer with the context to trust it beats a cheap one — sufficiency,
+  not length, is the bar
 - Keep model IDs and sampling temperatures centralized in `core/clients.py`
 - Never send a compressed prompt to a frontier model
 - Never raise `CHUNK_SIZE` without changing the embedder
