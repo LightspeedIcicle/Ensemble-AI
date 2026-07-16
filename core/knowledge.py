@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from core.clients import ollama_client, LOCAL_MODEL
+from core.clients import ollama_client, LOCAL_MODEL, TEMP_DETERMINISTIC
 from core.helpers import parse_json
 
 # ── Store locations ───────────────────────────────────────────────────────────
@@ -87,6 +87,7 @@ Return only this JSON with no preamble or markdown:
                 "content": f"New item: {new_item}\n\nExisting knowledge:\n{json.dumps(existing_knowledge, indent=2)}",
             },
         ],
+        options={"temperature": TEMP_DETERMINISTIC},
     )
     parsed = parse_json(result["message"]["content"])
     if not parsed:
@@ -152,7 +153,7 @@ def add_to_master_prompt(items, source_topic):
 
 # ── Orchestration helper ──────────────────────────────────────────────────────
 
-def persist(prompt, compressed, validated):
+def persist(prompt, validated):
     """Full stage-7 flow: dedup validated facts, then log + optionally promote.
 
     `validated` is the monitor's list of {"item": ...} dicts. Kept here so the
@@ -170,7 +171,10 @@ def persist(prompt, compressed, validated):
         print("[Knowledge] No new information to log")
         return
 
-    topic = compressed[:50] + "..." if len(compressed) > 50 else compressed
+    # Topic label comes from the original prompt. It used to come from the
+    # compressed one, but the escalation path no longer produces a compressed
+    # prompt to borrow — a truncation is just as good for a log heading.
+    topic = prompt[:50] + "..." if len(prompt) > 50 else prompt
     selected = request_master_prompt_addition(new_items, topic)
 
     if selected is None:

@@ -3,15 +3,19 @@
 #
 # Wires the core/ stages into the full request → response flow:
 #
-#   compress → route ──local──> local answer
-#                   └─escalate─> fan-out → compare → monitor → consolidate → persist
+#   route ──local──> compress (if large) → local answer
+#        └─escalate─> fan-out → compare → monitor → consolidate → persist
+#
+# Note the order: routing happens on the ORIGINAL prompt, and compression only
+# ever runs on the local branch. Nothing bound for a frontier model is compressed
+# — see core/compress.py for why that inverted the quality gradient.
 #
 # This file stays a thin conductor: every stage's real logic lives in core/.
 
 import asyncio
 
 from core import knowledge
-from core.compress import compress_prompt
+from core.compress import maybe_compress
 from core.router import local_router, query_local
 from core.council import fan_out, compare_responses
 from core.monitor import monitor_discrepancies
@@ -24,33 +28,42 @@ async def run_pipeline(prompt):
     print(f"\nOriginal prompt: {prompt}")
     print("=" * 60)
 
-    # ── Stage 1 — Compress ────────────────────────────────────────────────────
-    print("\n[Compression] Compressing prompt...")
-    compression = compress_prompt(prompt)
-    compressed = compression["compressed"]
-    print(f"[Compression] {compression['original_tokens']} → {compression['compressed_tokens']} tokens "
-          f"({compression['reduction_percent']}% reduction)")
-    print(f"[Compression] Compressed: {compressed}")
-
-    # ── Stage 2 — Route ───────────────────────────────────────────────────────
+    # ── Stage 1 — Route ───────────────────────────────────────────────────────
+    # Routing reads the original prompt. The router's whole job is judging
+    # nuance and difficulty, so handing it a lossily-compressed prompt would
+    # degrade the exact signal it decides on.
     print("\n[Routing] Evaluating query...")
-    routing = local_router(compressed)
+    routing = local_router(prompt)
     print(f"[Routing] {routing['decision'].upper()} | Confidence: {routing['confidence']} | {routing['reason']}")
 
     if routing["decision"] == "local":
-        # Local path: answer directly, primed with accumulated master-prompt knowledge.
-        print("\n[Local] Handling query locally...")
-        response = query_local(compressed, system=knowledge.load_master_prompt())
+        # ── Stage 2 — Compress (local → local only) ───────────────────────────
+        # Both ends of this handoff are the same local model, so a lossy rewrite
+        # costs nothing a frontier model would have noticed. Skipped entirely
+        # unless the prompt is large enough for context pressure to be real.
+        local_prompt = prompt
+        compression = maybe_compress(prompt)
+        if compression:
+            local_prompt = compression["compressed"]
+            print(f"\n[Compression] {compression['original_tokens']} → {compression['compressed_tokens']} tokens "
+                  f"({compression['reduction_percent']}% reduction)")
+        else:
+            print("\n[Compression] Skipped — prompt is already small")
+
+        # Answer directly, primed with accumulated master-prompt knowledge.
+        print("[Local] Handling query locally...")
+        response = query_local(local_prompt, system=knowledge.load_master_prompt())
         print(f"\n--- LOCAL RESPONSE ---\n{response}")
         return
 
     # ── Stage 3 — Fan out ─────────────────────────────────────────────────────
+    # The council receives the prompt exactly as the user wrote it.
     print("\n[Escalating] Sending to Claude and Gemini...")
-    claude_response, gemini_response = await fan_out(compressed)
+    claude_response, gemini_response = await fan_out(prompt)
     print("[Fan-out complete] Both council members responded")
 
     # ── Stage 4 — Compare ─────────────────────────────────────────────────────
-    comparison = compare_responses(compressed, claude_response, gemini_response)
+    comparison = compare_responses(prompt, claude_response, gemini_response)
     if not comparison:
         print("Comparison failed")
         return
@@ -58,7 +71,7 @@ async def run_pipeline(prompt):
 
     # ── Stage 5 — Monitor / validate ──────────────────────────────────────────
     monitor_results = monitor_discrepancies(
-        compressed,
+        prompt,
         comparison.get("discrepancies", []),
         comparison.get("unique_to_a", []),
         comparison.get("unique_to_b", []),
@@ -72,7 +85,6 @@ async def run_pipeline(prompt):
     print(f"[Monitoring complete] Validated: {len(validated)} | Removed: {len(removed)} | Ambiguous: {len(ambiguous)}")
 
     # ── Stage 6 — Consolidate ─────────────────────────────────────────────────
-    # Use the original (uncompressed) prompt so the final answer reads naturally.
     final_answer = consolidate(prompt, comparison.get("agreement", []), monitor_results)
     print("\n--- FINAL CONSOLIDATED ANSWER ---")
     print(final_answer)
@@ -83,7 +95,7 @@ async def run_pipeline(prompt):
             print(f"  ? {item['item']}: {item['reason']}")
 
     # ── Stage 7 — Persist knowledge ───────────────────────────────────────────
-    knowledge.persist(prompt, compressed, validated)
+    knowledge.persist(prompt, validated)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
