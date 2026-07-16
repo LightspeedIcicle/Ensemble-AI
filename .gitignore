@@ -1,0 +1,34 @@
+# Environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+
+# Conda
+*.conda
+
+# Secrets and personal data
+*.Modelfile
+Modelfile*
+
+# ChromaDB
+chroma_db/
+
+# Knowledge store (contains downloaded papers and personal notes)
+knowledge/
+
+# Node / Next.js
+node_modules/
+.next/
+*.log
+
+# Obsidian cache
+obsidian_vault/.obsidian/workspace*
+obsidian_vault/.obsidian/cache
+obsidian_vault/.obsidian/plugins/*/data.json
+
+# OS
+.DS_Store
+Thumbs.db
