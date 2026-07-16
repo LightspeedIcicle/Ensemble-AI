@@ -91,6 +91,56 @@ same fact from being stored twice.
 
 ## Cost
 
+**The budget dial is `effort`, not `max_tokens`**
+The obvious way to build "let the user spend less" is to turn `max_tokens` down.
+That is not a cheaper answer — it is a **truncated** one. The model generates until
+it hits the ceiling and stops mid-sentence, and every token it generated on the
+way is billed. You pay full price for a broken answer, which is strictly the worst
+cell in the table. `max_tokens` is a safety rail the model cannot see; it has no
+idea it is about to be cut off, so it cannot budget around it.
+
+`effort` is the API's actual mechanism for this. It asks the model to calibrate
+its own depth — less exploration, a more direct route — and the *model* decides
+what to leave out. That is the difference between a shorter answer and an amputated
+one, and it is why the dial in `core/budget.py` moves `effort` and thinking rather
+than the ceiling.
+
+`max_tokens` does move with the dial, but only ever **upward**, and never as an
+economy. `max_tokens` caps thinking and response *together*, so enabling thinking
+against a ceiling tuned for a non-thinking call means the reasoning eats the budget
+and the answer truncates — the exact failure above, reintroduced by trying to
+improve quality. The multiplier is a floor being raised out of the way. It stops at
+6× so the largest call stays under ~16K output, above which non-streaming requests
+risk SDK timeouts.
+
+**The judge wasn't thinking. The council member was.**
+No call in this pipeline set `thinking`, and the defaults are not symmetric:
+omitting the parameter runs **adaptive thinking on `claude-sonnet-5`** and **no
+thinking at all on `claude-opus-4-8`**. So the Sonnet council member reasoned
+before answering, and the Opus fact-checking gate that referees it did not. The
+judge principle — the referee should be at least as capable as those it judges —
+was inverted at the reasoning level, silently, by a parameter nobody wrote.
+
+This is why `core/budget.py` sets `thinking` **explicitly at every level**,
+including the levels that turn it off. A dial built on defaults inherits the
+asymmetry and hides it one layer deeper. The default level, `balanced`, is the
+cheapest one that lets the judge think.
+
+Enabling thinking also broke every response parse in the codebase, latently:
+`response.content[0].text` was correct only because thinking was off. With adaptive
+thinking on, index 0 is a `ThinkingBlock` and `.text` raises. `core/helpers.py`
+now has `response_text()`, which selects the text block instead of assuming its
+position.
+
+**The dial stops at the API boundary**
+`effort` and adaptive thinking are Anthropic parameters. The Gemini council member
+has its own surface and does not receive them. The dial could have been made to
+*look* like it reaches Gemini by mapping levels onto Google's parameters, but the
+mapping would be invented rather than equivalent, and a control that silently means
+something different on one of two council members is worse than one that visibly
+stops. If Gemini's knobs are wired up later, they should be their own named entry
+in `LEVELS`, not a guess folded into this one.
+
 **Where the money actually is: judge output tokens**
 An escalated query costs roughly $0.145 at list prices, and ~82% of that is Opus
 generating output at $25/M across three judge calls. The user's own prompt is

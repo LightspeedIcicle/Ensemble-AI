@@ -156,8 +156,28 @@ GEMINI_API_KEY=...
 
 **Run**
 ```bash
-python pipeline.py
+python pipeline.py                                    # demo prompt, balanced budget
+python pipeline.py "What caused the French Revolution?"
+python pipeline.py "..." --budget full                # when being wrong is expensive
+python pipeline.py --help                             # list the budget levels
 ```
+
+### Budget
+
+How much to spend on one query. The dial is **`effort` and thinking**, not
+`max_tokens` — turning the ceiling down doesn't shorten an answer, it truncates
+one, and you're billed for every token generated before the cut.
+
+| Level | Effort | Thinking | Use for |
+|-------|--------|----------|---------|
+| `minimal` | low | off | Simple factual queries |
+| `low` | medium | off | Well-specified questions |
+| `balanced` *(default)* | high | adaptive | Most work — what the judge needs |
+| `full` | max | adaptive | Questions where being wrong is expensive |
+
+`max_tokens` scales *up* with thinking (never down) so reasoning doesn't crowd out
+the answer. The dial applies to the Anthropic calls; the Gemini council member has
+its own parameter surface — see [DECISIONS.md](DECISIONS.md).
 
 By default this runs the built-in test prompt. Edit the `__main__` block in
 `pipeline.py`, or import and call `run_pipeline(your_prompt)` from your own code:
