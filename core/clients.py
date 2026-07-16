@@ -31,8 +31,20 @@ CLAUDE_MODEL    = "claude-sonnet-5"    # Council member — Claude
 GEMINI_MODEL    = "gemini-3.5-flash"   # Council member — Gemini
 JUDGE_MODEL     = "claude-opus-4-8"    # Judge — comparison, monitoring, consolidation
 
-LOCAL_MODEL     = "dolphin-llama3"     # Aurora's current base — swap here when eval picks a winner
-EMBED_MODEL     = "nomic-embed-text"   # Local embedding model via Ollama
+LOCAL_MODEL     = "ensemble-local"     # Pipeline's local model — see ensemble.Modelfile
+
+# The embedding model is deliberately NOT configured here. memory.py is a
+# standalone tool outside the request path, and importing this module would force
+# it to hold API keys just to index a folder — so it owns its own embedder config.
+
+# ── Local sampling temperatures ───────────────────────────────────────────────
+# The local model does two jobs with opposite requirements. Routing, dedup, and
+# compression are *evaluation* tasks — the same input must yield the same verdict
+# on every run, or gate decisions flip between runs and the pipeline becomes
+# non-reproducible. Answering is a *generation* task and can afford some warmth.
+# Ollama accepts these per request, so one model serves both roles.
+TEMP_DETERMINISTIC = 0.2   # routing, dedup, compression — verdicts must be stable
+TEMP_GENERATIVE    = 0.7   # local answers — variety is fine here
 
 # ── Local Client ──────────────────────────────────────────────────────────────
 # ollama is used as a module directly (ollama.chat) — no client object needed.
