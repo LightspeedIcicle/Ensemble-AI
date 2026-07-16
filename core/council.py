@@ -6,6 +6,7 @@
 
 import asyncio
 
+from core.budget import DEFAULT_LEVEL, max_tokens, sampling
 from core.clients import (
     anthropic_client,
     gemini_client,
@@ -13,18 +14,19 @@ from core.clients import (
     GEMINI_MODEL,
     COMPARE_MODEL,
 )
-from core.helpers import parse_json
+from core.helpers import parse_json, response_text
 
 
 # ── Council members (answer the query) ────────────────────────────────────────
 
-def query_claude(prompt):
+def query_claude(prompt, budget=DEFAULT_LEVEL):
     response = anthropic_client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=1000,
+        max_tokens=max_tokens(budget, 1000),
         messages=[{"role": "user", "content": prompt}],
+        **sampling(budget),
     )
-    return response.content[0].text
+    return response_text(response)
 
 
 def query_gemini(prompt):
@@ -37,21 +39,26 @@ def query_gemini(prompt):
 
 # ── Concurrent fan-out ────────────────────────────────────────────────────────
 
-async def fan_out(prompt):
+async def fan_out(prompt, budget=DEFAULT_LEVEL):
     """Query both council members concurrently. Returns (claude_response, gemini_response).
 
     Both SDK calls are blocking, so they run in the default executor and are
     awaited together with asyncio.gather.
+
+    `budget` reaches query_claude only. Gemini is a different provider with a
+    different parameter surface — effort and adaptive thinking are Anthropic
+    concepts. The dial deliberately stops at the API boundary rather than
+    pretending to a reach it does not have. See DECISIONS.md.
     """
     loop = asyncio.get_event_loop()
-    claude_task = loop.run_in_executor(None, query_claude, prompt)
+    claude_task = loop.run_in_executor(None, query_claude, prompt, budget)
     gemini_task = loop.run_in_executor(None, query_gemini, prompt)
     return await asyncio.gather(claude_task, gemini_task)
 
 
 # ── Cross-comparison (judge role) ─────────────────────────────────────────────
 
-def compare_responses(prompt, claude_response, gemini_response):
+def compare_responses(prompt, claude_response, gemini_response, budget=DEFAULT_LEVEL):
     """Have the judge referee the two answers, returning structured agreement/discrepancies."""
     comparison_prompt = f"""You are a precise analytical agent. Compare two AI responses and identify meaningful discrepancies.
 
@@ -79,7 +86,8 @@ Return only this JSON with no preamble or markdown:
 
     response = anthropic_client.messages.create(
         model=COMPARE_MODEL,
-        max_tokens=1000,
+        max_tokens=max_tokens(budget, 1000),
         messages=[{"role": "user", "content": comparison_prompt}],
+        **sampling(budget),
     )
-    return parse_json(response.content[0].text)
+    return parse_json(response_text(response))

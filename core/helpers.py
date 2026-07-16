@@ -4,6 +4,21 @@
 import json
 
 
+def response_text(response):
+    """Pull the text out of an Anthropic response.
+
+    Not `response.content[0].text`. With adaptive thinking enabled, thinking
+    blocks come FIRST in `content`, so index 0 is a ThinkingBlock and `.text`
+    raises. Every call in this pipeline used to index position zero, which was
+    only correct because thinking happened to be off — a latent break that would
+    have fired the moment anyone turned it on.
+
+    Returns the first text block's content, or "" if the response carried none
+    (a refusal returns an empty content array).
+    """
+    return next((b.text for b in response.content if b.type == "text"), "")
+
+
 def parse_json(raw):
     """Best-effort JSON extraction from an LLM response.
 

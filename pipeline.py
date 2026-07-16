@@ -15,6 +15,7 @@
 import asyncio
 
 from core import knowledge
+from core.budget import DEFAULT_LEVEL, DESCRIPTIONS, resolve
 from core.compress import maybe_compress
 from core.retrieval import recall_context, build_local_system
 from core.router import local_router, query_local
@@ -23,10 +24,13 @@ from core.monitor import monitor_discrepancies
 from core.consolidate import consolidate
 
 
-async def run_pipeline(prompt):
+async def run_pipeline(prompt, budget=DEFAULT_LEVEL):
+    effort, thinking, _ = resolve(budget)   # raises now, not three API calls in
     knowledge.init_knowledge_store()
 
     print(f"\nOriginal prompt: {prompt}")
+    print(f"Budget: {budget} — {DESCRIPTIONS[budget]}")
+    print(f"        effort={effort}, thinking={'adaptive' if thinking else 'off'}")
     print("=" * 60)
 
     # ── Stage 1 — Route ───────────────────────────────────────────────────────
@@ -72,11 +76,11 @@ async def run_pipeline(prompt):
     # ── Stage 3 — Fan out ─────────────────────────────────────────────────────
     # The council receives the prompt exactly as the user wrote it.
     print("\n[Escalating] Sending to Claude and Gemini...")
-    claude_response, gemini_response = await fan_out(prompt)
+    claude_response, gemini_response = await fan_out(prompt, budget)
     print("[Fan-out complete] Both council members responded")
 
     # ── Stage 4 — Compare ─────────────────────────────────────────────────────
-    comparison = compare_responses(prompt, claude_response, gemini_response)
+    comparison = compare_responses(prompt, claude_response, gemini_response, budget)
     if not comparison:
         print("Comparison failed")
         return
@@ -88,6 +92,7 @@ async def run_pipeline(prompt):
         comparison.get("discrepancies", []),
         comparison.get("unique_to_a", []),
         comparison.get("unique_to_b", []),
+        budget,
     )
     if not monitor_results:
         print("Monitoring failed")
@@ -98,7 +103,7 @@ async def run_pipeline(prompt):
     print(f"[Monitoring complete] Validated: {len(validated)} | Removed: {len(removed)} | Ambiguous: {len(ambiguous)}")
 
     # ── Stage 6 — Consolidate ─────────────────────────────────────────────────
-    final_answer = consolidate(prompt, comparison.get("agreement", []), monitor_results)
+    final_answer = consolidate(prompt, comparison.get("agreement", []), monitor_results, budget)
     print("\n--- FINAL CONSOLIDATED ANSWER ---")
     print(final_answer)
 
@@ -123,9 +128,26 @@ async def run_pipeline(prompt):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import argparse
+
+    from core.budget import LEVELS
+
+    parser = argparse.ArgumentParser(
+        description="Ensemble AI — local-first multi-agent pipeline.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="budget levels:\n"
+        + "\n".join(f"  {n:9} {DESCRIPTIONS[n]}" for n in LEVELS),
+    )
+    parser.add_argument("prompt", nargs="?", help="the question (omit for the demo prompt)")
+    parser.add_argument(
+        "-b", "--budget", choices=list(LEVELS), default=DEFAULT_LEVEL,
+        help=f"how much to spend on this query (default: {DEFAULT_LEVEL})",
+    )
+    args = parser.parse_args()
+
     test_prompt = (
         "Could you please explain to me what were the most significant and "
         "important causes that led to the outbreak of the French Revolution in "
         "the late 18th century?"
     )
-    asyncio.run(run_pipeline(test_prompt))
+    asyncio.run(run_pipeline(args.prompt or test_prompt, args.budget))

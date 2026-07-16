@@ -18,11 +18,13 @@
 
 import json
 
+from core.budget import DEFAULT_LEVEL, max_tokens, sampling
 from core.clients import anthropic_client, MONITOR_MODEL
-from core.helpers import parse_json
+from core.helpers import parse_json, response_text
 
 
-def monitor_discrepancies(original_prompt, discrepancies, unique_to_a, unique_to_b):
+def monitor_discrepancies(original_prompt, discrepancies, unique_to_a, unique_to_b,
+                          budget=DEFAULT_LEVEL):
     """Validate and filter the council's disagreements and unique claims.
 
     Short-circuits to an empty result when there is nothing to check.
@@ -66,7 +68,8 @@ Return only this JSON with no preamble or markdown:
 
     response = anthropic_client.messages.create(
         model=MONITOR_MODEL,
-        max_tokens=2000,
+        max_tokens=max_tokens(budget, 2000),
         messages=[{"role": "user", "content": monitor_prompt}],
+        **sampling(budget),
     )
-    return parse_json(response.content[0].text)
+    return parse_json(response_text(response))

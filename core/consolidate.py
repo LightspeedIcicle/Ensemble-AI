@@ -6,10 +6,12 @@
 
 import json
 
+from core.budget import DEFAULT_LEVEL, max_tokens, sampling
 from core.clients import anthropic_client, CONSOLIDATE_MODEL
+from core.helpers import response_text
 
 
-def consolidate(original_prompt, agreement, monitor_results):
+def consolidate(original_prompt, agreement, monitor_results, budget=DEFAULT_LEVEL):
     """Produce the final single answer from agreed + validated information."""
     validated_items = [v["item"] for v in monitor_results.get("validated", [])]
 
@@ -27,7 +29,8 @@ Produce a clear, well-structured answer. Do not mention multiple AI sources."""
 
     response = anthropic_client.messages.create(
         model=CONSOLIDATE_MODEL,
-        max_tokens=1500,
+        max_tokens=max_tokens(budget, 1500),
         messages=[{"role": "user", "content": consolidation_prompt}],
+        **sampling(budget),
     )
-    return response.content[0].text
+    return response_text(response)
