@@ -1,6 +1,6 @@
 # ── Core runtime deps (imported directly by the pipeline) ──
-google-genai
-ollama
+google-genai==2.7.0
+ollama==0.6.2
 
 # ── Full pinned dependency set ──
 aiohappyeyeballs==2.6.2
