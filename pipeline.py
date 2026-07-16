@@ -102,6 +102,15 @@ async def run_pipeline(prompt):
     print("\n--- FINAL CONSOLIDATED ANSWER ---")
     print(final_answer)
 
+    # The judge already paid to explain each rejection, and a claim one council
+    # member made that the judge ruled false is the single most interesting thing
+    # this pipeline produces — it's cross-validation catching a hallucination in
+    # the act. It was being counted and discarded. Show it.
+    if removed:
+        print("\n--- REJECTED BY THE JUDGE ---")
+        for item in removed:
+            print(f"  ✗ {item['item']}: {item['reason']}")
+
     if ambiguous:
         print("\n--- FLAGGED FOR REVIEW ---")
         for item in ambiguous:

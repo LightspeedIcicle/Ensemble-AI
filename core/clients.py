@@ -29,7 +29,22 @@ gemini_client = genai.Client(
 #   capable as those it judges.
 CLAUDE_MODEL    = "claude-sonnet-5"    # Council member — Claude
 GEMINI_MODEL    = "gemini-3.5-flash"   # Council member — Gemini
-JUDGE_MODEL     = "claude-opus-4-8"    # Judge — comparison, monitoring, consolidation
+
+# The judge is three roles, not one — and they are separate constants because
+# they are separate jobs with different capability requirements:
+#
+#   COMPARE      structural diff. "A said X, B said Y, they differ on Z."
+#                Careful reading, no adjudication. The cheapest of the three.
+#   MONITOR      fact-checking. "Is X actually true? Is it relevant?"
+#                Needs real world knowledge — the most capability-sensitive role.
+#   CONSOLIDATE  synthesis. Writes the answer the user actually reads.
+#
+# All three default to the top tier. They are split so a role can be re-tiered
+# here, in one line, without touching a stage module — which is the whole point
+# of separating them. See DECISIONS.md on the compare/monitor tiering question.
+COMPARE_MODEL     = "claude-opus-4-8"  # Stage 4 — cross-comparison
+MONITOR_MODEL     = "claude-opus-4-8"  # Stage 5 — validity + relevance
+CONSOLIDATE_MODEL = "claude-opus-4-8"  # Stage 6 — final synthesis
 
 LOCAL_MODEL     = "ensemble-local"     # Pipeline's local model — see ensemble.Modelfile
 

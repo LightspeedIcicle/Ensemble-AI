@@ -11,7 +11,7 @@ from core.clients import (
     gemini_client,
     CLAUDE_MODEL,
     GEMINI_MODEL,
-    JUDGE_MODEL,
+    COMPARE_MODEL,
 )
 from core.helpers import parse_json
 
@@ -78,7 +78,7 @@ Return only this JSON with no preamble or markdown:
 }}"""
 
     response = anthropic_client.messages.create(
-        model=JUDGE_MODEL,
+        model=COMPARE_MODEL,
         max_tokens=1000,
         messages=[{"role": "user", "content": comparison_prompt}],
     )

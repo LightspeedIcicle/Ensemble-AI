@@ -6,7 +6,7 @@
 
 import json
 
-from core.clients import anthropic_client, JUDGE_MODEL
+from core.clients import anthropic_client, CONSOLIDATE_MODEL
 
 
 def consolidate(original_prompt, agreement, monitor_results):
@@ -26,7 +26,7 @@ Additional validated information:
 Produce a clear, well-structured answer. Do not mention multiple AI sources."""
 
     response = anthropic_client.messages.create(
-        model=JUDGE_MODEL,
+        model=CONSOLIDATE_MODEL,
         max_tokens=1500,
         messages=[{"role": "user", "content": consolidation_prompt}],
     )
