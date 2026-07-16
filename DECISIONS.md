@@ -15,6 +15,42 @@ answer to a hard question) is worse than the cost of over-escalating (a few extr
 API tokens). Any parse failure in routing defaults to escalate, so the system
 fails safe.
 
+**The router's rules are ordered, because two absolutes contradicted each other**
+The original routing prompt had two lists. `ALWAYS escalate if the query` included
+*"involves science, medicine, law, economics, or technical domains."* `Handle
+locally ONLY if the query` included *"has a single, universally agreed factual
+answer (capitals, dates, definitions)."*
+
+"What is a closure in programming?" is a **definition** and it is **technical**.
+Both lists matched. `ALWAYS` and `ONLY` are both absolute, so the model was asked
+to choose between two rules it had been told were non-negotiable — and it chose
+differently across runs, at every temperature including 0.0. This sat on the single
+highest-leverage decision in the system: on a borderline query the router was a
+coin flip between free and ~$0.13.
+
+The rules now apply **in order, first match decides**, with an explicit default
+(escalate) at the bottom. That dissolves the contradiction: a definition in a
+technical field reaches rule 3 and goes local; a judgement call in the same field
+matches rule 1 first and escalates.
+
+The fix needed a second pass, which is worth recording too. Its first version
+closed with "the SHAPE of the question decides, not its subject — a technical field
+is not by itself a reason to escalate." But rule 2 escalates on *"medicine, law,
+finance, safety"* — a subject. That correction contradicted rule 2 three lines
+after dissolving the original contradiction, and it measured that way: *"Is
+intermittent fasting healthy?"* began going local 1 run in 4. A medical question,
+to an 8B model, with no cross-validation — the exact failure the router exists to
+prevent, introduced while fixing a cheaper one. Rule 3 is now scoped to *settled*
+answers, with "if you find yourself reasoning that something is basically settled,
+it is not settled" as the tell.
+
+Measured after: 10 labelled queries × 5 runs at temp 0.2 → **10/10 correct, 0
+flips, 0 should-escalate queries going local.** Before: 7/8, with the closure query
+split 2/2. Limits worth stating — one model, one session, small n, hand-labelled
+expectations, and one parse failure on `"What is 17 times 23?"` (which fails safe
+to escalate, so a trivial query occasionally costs $0.13). Enough to show the
+contradiction is gone. Not a regression suite.
+
 **Compression runs local-to-local only — never in front of the council** *(revised)*
 The original design compressed every prompt *before* routing, on the theory that
 cheap local tokens buy expensive API tokens. A review of the pipeline surfaced the
@@ -194,10 +230,32 @@ even desirable. Ollama accepts sampling options per request, so one model serves
 both roles — `TEMP_DETERMINISTIC` (0.2) for evaluation, `TEMP_GENERATIVE` (0.7)
 for answers. Both live in `core/clients.py`, next to the model IDs they belong to.
 
-This corrects a real defect rather than a stylistic one: a router sampling at 0.9
-is a router that contradicts itself, sending the same query down different
-branches on different runs, and that is invisible until you try to reproduce a
-result.
+**What low temperature does and does not buy** *(corrected — this entry originally
+claimed something that measurement disproved)*
+
+It was first written here that a router sampling at 0.9 "contradicts itself,
+sending the same query down different branches on different runs," and that 0.2
+fixes it. That was asserted, not tested. When it was finally tested — same query,
+12 runs per setting, against `ensemble-local`:
+
+| temp | verdicts on "What is a closure in programming?" | deterministic |
+|------|------------------------------------------------|---------------|
+| 0.0  | 11 escalate / 1 local | **no** |
+| 0.2  | 7 escalate / 5 local  | **no** |
+| 0.5  | 8 escalate / 4 local  | **no** |
+| 0.9  | 5 escalate / 6 local / 1 parse failure | **no** |
+
+**It flips at temperature 0.0.** Temperature was never the cause. It reduces
+variance — 0.0 was steadier than 0.9 — but it cannot make a router reproducible,
+and no setting here did.
+
+Low temperature is still worth having, for a smaller and different reason than
+claimed: **valid JSON**. Only 0.9 produced output `parse_json` couldn't read, and
+`local_router` fails safe to escalate on a parse failure — so hot sampling
+silently converts a free routing decision into a paid council call. That is a real
+cost, just not the one originally written down.
+
+The actual cause of the flipping was the prompt. See below.
 
 **Two Modelfiles, not one**
 `ensemble.Modelfile` defines the pipeline's local model: persona-free,
