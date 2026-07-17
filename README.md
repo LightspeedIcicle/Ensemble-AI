@@ -177,6 +177,23 @@ ollama create ensemble-local -f ensemble.Modelfile
 defaults to near-greedy sampling, because routing and deduplication are
 evaluation tasks that have to return the same verdict twice.
 
+**Test**
+```bash
+pip install -r requirements-dev.txt
+pytest                  # 84 tests, fully offline, ~0.1s — no keys, no services
+pytest -m ollama        # the routing suite against a live local model (free, ~50s)
+```
+
+`pytest` on a fresh clone runs everything that doesn't need a network. Tests that
+need Ollama are skipped unless asked for, and tests that spend money never run
+unless you pass `-m paid`. An unmarked test that reaches the network fails loudly
+rather than quietly depending on a service.
+
+The suite is mostly a fence around bugs that actually shipped — a `max_tokens`
+ceiling below what a stage produces, a `content[0].text` that breaks the moment
+thinking is on, a router rule that poached judgement questions, a prompt reaching
+a shell. Each one is a test now.
+
 **Configure** — create a `.env` file (never commit it):
 ```
 ANTHROPIC_API_KEY=sk-ant-...
