@@ -68,7 +68,7 @@ Return only this JSON with no preamble or markdown:
 
     response = anthropic_client.messages.create(
         model=MONITOR_MODEL,
-        max_tokens=max_tokens(budget, 2000),
+        max_tokens=max_tokens(budget, "monitor"),
         messages=[{"role": "user", "content": monitor_prompt}],
         **sampling(budget),
     )

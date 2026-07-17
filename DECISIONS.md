@@ -142,12 +142,32 @@ one, and it is why the dial in `core/budget.py` moves `effort` and thinking rath
 than the ceiling.
 
 `max_tokens` does move with the dial, but only ever **upward**, and never as an
-economy. `max_tokens` caps thinking and response *together*, so enabling thinking
-against a ceiling tuned for a non-thinking call means the reasoning eats the budget
-and the answer truncates — the exact failure above, reintroduced by trying to
-improve quality. The multiplier is a floor being raised out of the way. It stops at
-6× so the largest call stays under ~16K output, above which non-streaming requests
-risk SDK timeouts.
+economy. It caps thinking and response *together*, so enabling thinking against a
+ceiling tuned for a non-thinking call means the reasoning eats the budget and the
+answer truncates. The headroom is a floor being raised out of the way.
+
+**The base ceilings were guesses, and two were too low** *(found by measurement)*
+The original per-stage ceilings — 1000/1000/2000/1500 — predate this file and were
+never checked against output. Measured:
+
+| stage | old base | actual output | now |
+|-------|----------|---------------|-----|
+| member | 1000 | 665–704 | 1500 |
+| compare | 1000 | **1298** | 2000 |
+| monitor | 2000 | **2588** | 3500 |
+| consolidate | 1500 | 1305 | 2000 |
+
+Two of four were below what the stage produces. At `balanced` a 3× multiplier hid
+it. The first `minimal` run (1×) hit the real thing: compare stopped at
+`max_tokens`, emitted unparseable JSON, `parse_json` returned `None`, and the
+pipeline aborted — **after billing $0.0488 for no answer**. That is verbatim the
+failure this section warns about, shipped by the dial that warns about it.
+
+Headroom is now **added** rather than multiplied, and bases come from observed
+output. Multiplying was wrong twice: it assumed the bases were right, and it broke
+the top end too — monitor at 3500×6 is 21K, past the streaming threshold. Additive
+is also the truer model: thinking costs roughly a fixed budget of reasoning, not a
+proportion of the answer. Re-measure the bases if the prompts change.
 
 **The judge wasn't thinking. The council member was.**
 No call in this pipeline set `thinking`, and the defaults are not symmetric:
@@ -177,11 +197,28 @@ something different on one of two council members is worse than one that visibly
 stops. If Gemini's knobs are wired up later, they should be their own named entry
 in `LEVELS`, not a guess folded into this one.
 
-**Where the money actually is: judge output tokens**
-An escalated query costs roughly $0.145 at list prices, and ~82% of that is Opus
-generating output at $25/M across three judge calls. The user's own prompt is
-**0.08%** of the query. This is worth stating plainly because it kills a whole
-family of intuitive optimizations:
+**Where the money actually is: judge output tokens** *(measured)*
+One real escalated query — "What were the main causes of the French Revolution?"
+at `balanced`, Anthropic calls only (Gemini is billed by Google):
+
+| stage | model | in | out | cost | stop |
+|-------|-------|-----|------|------|------|
+| member | sonnet-5 | 20 | 665 | $0.0100 | end_turn |
+| compare | opus-4-8 | 2772 | 1298 | $0.0463 | end_turn |
+| monitor | opus-4-8 | 1265 | 2588 | $0.0710 | end_turn |
+| consolidate | opus-4-8 | 1080 | 1305 | $0.0380 | end_turn |
+| | | | | **$0.1654** | |
+
+**Opus output alone is 78% of the query.** The user's prompt was **20 tokens** —
+0.05%. `minimal` on the same query measured **$0.1196 (−28%)**.
+
+These replace an earlier estimate of $0.1453 / 82%, which was described here as a
+worst case priced from the `max_tokens` ceilings. It was not a worst case: the real
+query came in **14% above** it. The ratio was close; the absolute was wrong in the
+direction claimed impossible. Estimates are labelled as estimates in this file for
+that reason.
+
+This kills a whole family of intuitive optimizations:
 
 - *Compressing the prompt* targets 0.4% of the query. See the compression entry
   above — it was removed from the escalation path for quality reasons, but even if

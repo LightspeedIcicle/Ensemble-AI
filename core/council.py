@@ -22,7 +22,7 @@ from core.helpers import parse_json, response_text
 def query_claude(prompt, budget=DEFAULT_LEVEL):
     response = anthropic_client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=max_tokens(budget, 1000),
+        max_tokens=max_tokens(budget, "member"),
         messages=[{"role": "user", "content": prompt}],
         **sampling(budget),
     )
@@ -86,7 +86,7 @@ Return only this JSON with no preamble or markdown:
 
     response = anthropic_client.messages.create(
         model=COMPARE_MODEL,
-        max_tokens=max_tokens(budget, 1000),
+        max_tokens=max_tokens(budget, "compare"),
         messages=[{"role": "user", "content": comparison_prompt}],
         **sampling(budget),
     )

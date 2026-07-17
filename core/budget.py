@@ -33,16 +33,27 @@
 # this pipeline a thinking council member refereed by an unthinking judge. A dial
 # built on defaults would inherit that silently.
 #
-# `max_mult` scales the per-stage max_tokens ceiling. Kept at 6× or below so the
-# largest call stays under ~16K output, above which non-streaming requests risk
-# SDK HTTP timeouts.
+# `think_headroom` is ADDED to a stage's base ceiling, never multiplied by it.
+#
+# The first version of this multiplied (1x/1x/3x/6x), which was wrong twice over.
+# It assumed the base ceilings were correct — they were not; measured output showed
+# compare needed ~1300 against a base of 1000 and monitor ~2600 against 2000, so at
+# 1x the `minimal` level TRUNCATED compare, produced unparseable JSON, and aborted
+# the run after billing $0.05 for no answer. That is precisely the failure this
+# module's header warns about, shipped by the module itself. And multiplying a
+# corrected base breaks the other end: monitor at 3500x6 is 21K, past the point
+# where non-streaming requests risk SDK timeouts.
+#
+# Additive headroom is right because thinking costs roughly a fixed budget of
+# reasoning, not a proportion of the answer. A stage's base is what it needs to
+# answer; the headroom is room to think first.
 
 LEVELS = {
-    # name        effort    thinking  max_mult
-    "minimal":  ("low",     False,    1),
-    "low":      ("medium",  False,    1),
-    "balanced": ("high",    True,     3),
-    "full":     ("max",     True,     6),
+    # name        effort    thinking  think_headroom
+    "minimal":  ("low",     False,    0),
+    "low":      ("medium",  False,    0),
+    "balanced": ("high",    True,     4000),
+    "full":     ("max",     True,     8000),
 }
 
 DEFAULT_LEVEL = "balanced"
@@ -80,11 +91,34 @@ def sampling(level):
     }
 
 
-def max_tokens(level, base):
-    """Scale a stage's max_tokens ceiling for this budget level.
+# Measured ceilings. Each is what the stage actually produced on a real escalated
+# query, plus margin — NOT a guess. The originals (1000/1000/2000/1500) were
+# inherited guesses, and two of the four were below what the stage needed:
+#
+#   stage         old base   measured output   now
+#   member          1000          665–704      1500
+#   compare         1000          1298         2000   <-- truncated at the old base
+#   monitor         2000          2588         3500   <-- truncated at the old base
+#   consolidate     1500          1305         2000
+#
+# Re-measure and revise these if the prompts change. A base below what a stage
+# produces does not shorten its answer — it cuts the answer off and bills you for
+# the whole thing.
+BASE_MAX_TOKENS = {
+    "member": 1500,
+    "compare": 2000,
+    "monitor": 3500,
+    "consolidate": 2000,
+}
 
-    `base` is the stage's own non-thinking ceiling. The multiplier exists to keep
-    thinking from crowding out the answer, not to ration output.
+
+def max_tokens(level, stage):
+    """The max_tokens ceiling for a stage at this budget level.
+
+    base (what the stage needs to answer) + headroom (room to think first).
+    Additive, never multiplicative — see the note on LEVELS.
     """
-    _, _, mult = resolve(level)
-    return base * mult
+    if stage not in BASE_MAX_TOKENS:
+        raise ValueError(f"unknown stage {stage!r} — one of: {', '.join(BASE_MAX_TOKENS)}")
+    _, _, headroom = resolve(level)
+    return BASE_MAX_TOKENS[stage] + headroom

@@ -175,7 +175,7 @@ one, and you're billed for every token generated before the cut.
 | `balanced` *(default)* | high | adaptive | Most work — what the judge needs |
 | `full` | max | adaptive | Questions where being wrong is expensive |
 
-`max_tokens` scales *up* with thinking (never down) so reasoning doesn't crowd out
+`max_tokens` gets headroom added (never subtracted) so reasoning doesn't crowd out
 the answer. The dial applies to the Anthropic calls; the Gemini council member has
 its own parameter surface — see [DECISIONS.md](DECISIONS.md).
 

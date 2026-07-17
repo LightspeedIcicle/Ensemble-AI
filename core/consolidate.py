@@ -29,7 +29,7 @@ Produce a clear, well-structured answer. Do not mention multiple AI sources."""
 
     response = anthropic_client.messages.create(
         model=CONSOLIDATE_MODEL,
-        max_tokens=max_tokens(budget, 1500),
+        max_tokens=max_tokens(budget, "consolidate"),
         messages=[{"role": "user", "content": consolidation_prompt}],
         **sampling(budget),
     )
