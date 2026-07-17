@@ -21,22 +21,40 @@ client = chromadb.PersistentClient(path="./chroma_db")
 
 # 2. Setup the Embedding Function (The Translator)
 # We use a free, local model to turn text into math. No API calls needed.
-sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name=EMBED_MODEL_NAME
-)
+#
+# chromadb's default embedder IS all-MiniLM-L6-v2, run through onnxruntime — which
+# arrives as one of chromadb's own dependencies. The explicit
+# SentenceTransformerEmbeddingFunction that used to be here names the same model
+# but reaches it through sentence-transformers, which pulls PyTorch and the whole
+# CUDA stack: several GB of dependency to run weights already present.
+#
+# That extra was never declared in requirements.txt, so this module raised
+# ImportError on any clean install — which is why recall() had never once run.
+# Same model, same ~256-token ceiling (see core/chunking.py), no CUDA.
+embedding_function = embedding_functions.DefaultEmbeddingFunction()
 
 # 3. Get or Create the Collection (The Bookshelf)
 collection = client.get_or_create_collection(
     name="enscio_knowledge",
-    embedding_function=sentence_transformer_ef
+    embedding_function=embedding_function
 )
 
 
 
 
 
+# knowledge/ is shared: the harvester drops source documents here, and
+# core/knowledge.py writes the pipeline's own artifacts here too. Indexing our own
+# output would feed the master prompt back through retrieval into the local model's
+# system prompt — where the master prompt already is. It would appear twice, and
+# the store would fill with the pipeline's own claims competing against real
+# sources. log.json escapes only because .json is not a readable extension here,
+# which is luck rather than design.
+PIPELINE_ARTIFACTS = {"master_prompt.txt", "log.json"}
+
+
 def ingest_knowledge():
-    """Reads all files in 'knowledge/' and memorizes them."""
+    """Reads source documents in 'knowledge/' and memorizes them."""
     print("--- MEMORY: Scanning Knowledge Folder ---")
     folder = "knowledge"
     
@@ -47,8 +65,10 @@ def ingest_knowledge():
         print(f"Memory: Found {existing_count} existing records.")
         # Optional: collection.delete(where={}) # Uncomment to wipe and rebuild
     
-    files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-    
+    files = [f for f in os.listdir(folder)
+             if os.path.isfile(os.path.join(folder, f))
+             and f not in PIPELINE_ARTIFACTS]
+
     for file in files:
         file_path = os.path.join(folder, file)
         text = ""

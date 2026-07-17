@@ -490,6 +490,33 @@ with their own knowledge; handing them passages retrieved by a 250-token-chunk
 MiniLM index is more likely to narrow their answer than improve it. The local
 model is the one that benefits from the crutch.
 
+**The graceful fallback hid a hard break for the life of the feature** *(found by
+running it)*. `memory.py` constructs its embedder with
+`SentenceTransformerEmbeddingFunction`, which needs `sentence-transformers` — never
+declared in `requirements.txt`, and not pulled in by chromadb. So `from memory
+import recall` raised ImportError on every clean install, `recall_context` caught
+it and returned None, and the pipeline printed "No context — answering unprimed".
+
+That is indistinguishable from "no store built yet", which is a normal state. The
+fallback worked perfectly and concealed the fact that the success path had **never
+executed once**. A degradation this graceful needs a test that the *good* path
+happens, not only that the bad path is survivable — otherwise a broken feature and
+an unused one look identical.
+
+`pypdf` was missing from requirements too. The embedder is now chromadb's
+`DefaultEmbeddingFunction`: the same `all-MiniLM-L6-v2` weights, reached through
+`onnxruntime` (already a chromadb dependency) instead of dragging in PyTorch and
+the CUDA stack for the same model. Same ~256-token ceiling, so `core/chunking.py`
+is unaffected.
+
+**memory.py must not index the pipeline's own output.** `knowledge/` is shared:
+the harvester drops sources there, and `core/knowledge.py` writes `master_prompt.txt`
+and `log.json` there. Verified live — `master_prompt.txt` was ingested on the first
+real run, which feeds the master prompt back through retrieval into the local system
+prompt *where the master prompt already is*, and fills the store with the pipeline's
+own claims competing against real sources. `log.json` escaped only because `.json`
+is not a readable extension, which is luck, not design. Both are excluded by name now.
+
 Retrieval degrades to nothing rather than failing. `memory.py` is imported lazily
 and every failure is swallowed: it pulls in chromadb and sentence-transformers and
 constructs a `PersistentClient` at import time, and a missing store is a normal
