@@ -15,6 +15,54 @@ answer to a hard question) is worse than the cost of over-escalating (a few extr
 API tokens). Any parse failure in routing defaults to escalate, so the system
 fails safe.
 
+**Where a real oracle exists, use the oracle — not the proxy**
+This pipeline is an elaborate proxy for truth. No oracle exists for "what caused
+the French Revolution", so it approximates one: two independent models answer, a
+referee cross-examines them, and agreement stands in for correctness.
+
+For code the oracle exists. You can run it. Two frontier models agreeing that a
+function is correct is worth dramatically less than executing that function once —
+and it costs ~$0.15 to get the weaker answer. So code that execution can settle is
+delegated to the Claude CLI, which can write a file, run it, read the traceback and
+fix it. That is a category the council cannot reach at any budget level, and no
+larger judge changes it: Fable agreeing with Opus is still consensus.
+
+**The line is executable-vs-judgement, not coding-vs-not.** Three queries about the
+same subject route three different ways, and this is the point:
+
+| query | route | why |
+|---|---|---|
+| "Write a function that merges two sorted lists" | delegate | running it settles it |
+| "Should I use async or threads?" | escalate | no execution answers this; experts differ |
+| "What does the yield keyword do?" | local | settled definition |
+
+Routing *all* coding to the CLI would throw away the coding questions the council
+is genuinely best at — architecture and tradeoff calls are exactly the "well-informed
+sources disagree" case the whole system was built for.
+
+Delegation fails soft. A missing CLI, a timeout, or a non-zero exit returns None and
+falls through to the council: costs money, keeps the answer.
+
+**Security: what makes delegation safe, and what would stop making it safe**
+This hands text to an agent with shell and filesystem access. Two properties hold
+today:
+
+1. The subprocess takes an **argument list** with `shell=False`. Never a command
+   string — `claude -p "{prompt}"` through a shell is a command injection the first
+   time a prompt contains a backtick. Verified: a prompt containing
+   `"; touch /tmp/PWNED_$(whoami); echo "` is passed as one argv element and creates
+   nothing.
+2. **The prompt comes from the user and only the user.** It arrives via argv, so the
+   person typing into this pipeline is the same person who could type `claude -p`
+   themselves. Delegation grants no authority they did not already have.
+
+Property 2 is the load-bearing one and it belongs to the CALLER, not to
+`core/delegate.py`. It breaks the moment anything else reaches the router — a web
+UI, an HTTP endpoint, a job queue, or harvested arXiv text finding a path in. At
+that point this is remote code execution with the operator's credentials. **If this
+pipeline ever grows a non-interactive entry point, delegation must be gated or
+removed.**
+
 **The router's rules are ordered, because two absolutes contradicted each other**
 The original routing prompt had two lists. `ALWAYS escalate if the query` included
 *"involves science, medicine, law, economics, or technical domains."* `Handle

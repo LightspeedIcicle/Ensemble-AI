@@ -17,6 +17,7 @@ import asyncio
 from core import knowledge
 from core.budget import DEFAULT_LEVEL, DESCRIPTIONS, resolve
 from core.compress import maybe_compress
+from core.delegate import delegate
 from core.retrieval import recall_context, build_local_system
 from core.router import local_router, query_local
 from core.council import fan_out, compare_responses
@@ -41,7 +42,19 @@ async def run_pipeline(prompt, budget=DEFAULT_LEVEL):
     routing = local_router(prompt)
     print(f"[Routing] {routing['decision'].upper()} | Confidence: {routing['confidence']} | {routing['reason']}")
 
-    if routing["decision"] == "local":
+    if routing["decision"] == "delegate":
+        # ── Stage 1b — Delegate ───────────────────────────────────────────────
+        # Something a tool can settle by running it. See core/delegate.py.
+        print("\n[Delegate] Handing to the Claude CLI (it can execute; we cannot)...")
+        answer = delegate(prompt)
+        if answer is not None:
+            print(f"\n--- DELEGATED RESPONSE ---\n{answer}")
+            return
+        # Delegation failed — fall through to the council rather than lose the
+        # answer. Costs money; better than returning nothing.
+        print("[Delegate] Falling through to the council")
+
+    elif routing["decision"] == "local":
         # ── Stage 2 — Compress (local → local only) ───────────────────────────
         # Both ends of this handoff are the same local model, so a lossy rewrite
         # costs nothing a frontier model would have noticed. Skipped entirely

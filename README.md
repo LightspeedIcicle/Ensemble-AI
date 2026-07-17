@@ -53,7 +53,7 @@ multi-part research question. Ensemble AI addresses three problems at once:
      │   by master     │                           │
      │   prompt)       │                           │
      └─────────────────┘                           ▼
-     └─────────────────┘              ┌──────────────────────────┐
+                                      ┌──────────────────────────┐
                                       │  4. COMPARE   (judge)     │  agreement /
                                       └────────────┬─────────────┘  discrepancies
                                                    ▼
@@ -83,6 +83,7 @@ Five roles, each independently assignable in `core/clients.py`:
 | **Judge — monitor** | `MONITOR_MODEL` | Claude Opus 4.8 | Validity + relevance fact-checking |
 | **Judge — consolidate** | `CONSOLIDATE_MODEL` | Claude Opus 4.8 | Writes the final answer |
 | **Local** | `LOCAL_MODEL` | ensemble-local | Routing, compression, simple answers, dedup |
+| **Delegate** | — | `claude` CLI | Code that running settles — bills your Claude subscription, not the API |
 
 The judge is a higher tier than the members it referees — the validator should be
 at least as capable as those it judges. It is three constants rather than one
@@ -103,7 +104,8 @@ Ensemble-AI/
 ├── core/
 │   ├── clients.py        # Model clients, model IDs, sampling temperatures
 │   ├── helpers.py        # parse_json, estimate_tokens
-│   ├── router.py         # Stage 1 — local vs. escalate    (local)
+│   ├── router.py         # Stage 1 — local / delegate / escalate (local)
+│   ├── delegate.py       # Stage 1b — hand coding to the Claude CLI
 │   ├── compress.py       # Stage 2 — compression, local path only (local)
 │   ├── retrieval.py      # Stage 2b — RAG lookup, local path only (local)
 │   ├── council.py        # Stage 3-4 — fan-out + comparison (members + judge)

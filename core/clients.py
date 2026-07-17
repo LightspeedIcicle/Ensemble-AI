@@ -42,7 +42,7 @@ GEMINI_MODEL    = "gemini-3.5-flash"   # Council member — Gemini
 # All three default to the top tier. They are split so a role can be re-tiered
 # here, in one line, without touching a stage module — which is the whole point
 # of separating them. See DECISIONS.md on the compare/monitor tiering question.
-COMPARE_MODEL     = "claude-opus-4-8"  # Stage 4 — cross-comparison
+COMPARE_MODEL     = "claude-sonnet-5"  # Stage 4 — cross-comparison
 MONITOR_MODEL     = "claude-opus-4-8"  # Stage 5 — validity + relevance
 CONSOLIDATE_MODEL = "claude-opus-4-8"  # Stage 6 — final synthesis
 
