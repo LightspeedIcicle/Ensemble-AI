@@ -1,33 +1,60 @@
 # Ensemble AI
 
-A cost-efficient, multi-agent LLM pipeline. Instead of sending every query to a
-single expensive model, Ensemble AI runs a **local-first pipeline** that
-compresses prompts, routes cheap queries to a free local model, and escalates
-only the hard ones to a **council** of frontier models — whose answers are then
-refereed, validated, and consolidated by a higher-tier **judge**.
+A multi-agent LLM pipeline that tells you **which parts of an answer to trust**.
 
-The thesis: the next generation of AI applications won't be single-model
-chatbots. They'll be pipelines — composable agents with specialized roles, cost
-controls, validation layers, and persistent memory.
+A single LLM call is a black box. You get one answer, fluent and confident, with
+no way to tell the solid parts from the invented ones. Ensemble AI answers hard
+questions with *two* independent frontier models, then has a higher-tier **judge**
+cross-examine them — so disagreements and hallucinations surface instead of
+shipping silently. Easy questions never reach that machinery: a free local model
+triages every query first, and code goes to a tool that can actually run it.
+
+## It is not cheaper. That is the point.
+
+| | cost |
+|---|---|
+| One escalated query through Ensemble AI | **$0.1653** |
+| Just asking `claude-opus-4-8` the same question | **$0.0328** |
+
+**5× the price of the thing it improves on** — measured, not estimated ([the full
+breakdown](DECISIONS.md#cost)). Two council members plus three judge calls will
+always cost multiples of one call. No dial changes that.
+
+Here is what the extra $0.13 bought on that run. The council split on a claim; the
+judge ruled against the one that was overstated:
+
+> **Royal extravagance was a direct cause of near-bankruptcy** *(Response A)* —
+> **Overstated.** The dominant historical view is that war debt and debt-servicing
+> costs drove the fiscal crisis, not court spending, which was proportionally
+> small. Response B's framing is closer to the consensus.
+
+It also caught two claims that were perfectly true and *weren't answers to the
+question* — the Tennis Court Oath and the storming of the Bastille are events *of*
+the Revolution, not causes of it. A single model gives you none of that. It gives
+you an answer, and no way to know which sentences to check.
+
+Buy this when being confidently wrong is expensive. Don't buy it to save money.
 
 ---
 
-## Why it exists
+## Where the money doesn't go
 
-A single LLM call is a black box: you get one answer, no second opinion, and you
-pay full price whether the question was "what's the capital of France" or a
-multi-part research question. Ensemble AI addresses three problems at once:
+Cost control here is about **not making the call**, not about shaving tokens off
+calls that happen:
 
-- **Cost** — a free local model (via Ollama) triages every query and answers the
-  simple ones outright. Paid APIs are only touched when the query genuinely
-  warrants them. The saving comes from *not making the call*, not from shaving
-  tokens off calls we make — see [DECISIONS.md](DECISIONS.md) on why compression
-  was moved off the escalation path.
-- **Reliability** — hard queries are answered by *two* independent frontier
-  models, then cross-examined so hallucinations and disagreements surface
-  instead of shipping silently.
-- **Memory** — facts that survive validation are logged and can be promoted into
-  a persistent "master prompt" that makes the local model smarter over time.
+- **Free local path.** A local model (via Ollama) answers settled questions for
+  $0.00 and never touches a paid API.
+- **Delegation.** Code that running would settle goes to the Claude CLI, which can
+  execute it. Consensus about code is worth less than one execution of it — and it
+  bills your Claude subscription, not the API.
+- **Memory.** Facts that survive the judge are logged and can be promoted into a
+  persistent master prompt, so the free path answers more over time.
+
+What *doesn't* save money, all measured rather than assumed: compressing prompts
+(the user's prompt is 0.05% of a query), shorthand (`"Hllo hw r u?"` costs **76%
+more** tokens than plain English), and prompt caching (the preambles are 48 tokens
+against a 4096-token minimum). See [DECISIONS.md](DECISIONS.md#cost) — the
+intuitive optimizations are all wrong here, and it's worth knowing why.
 
 ---
 

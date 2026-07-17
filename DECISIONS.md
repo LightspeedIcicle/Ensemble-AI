@@ -156,6 +156,36 @@ Collapsing two independently-tunable roles permanently, to save eight hundredths
 of a cent, is a bad trade. The cheaper option is only available *because* the roles
 are separate stages.
 
+**A local judge was tried and measured. It cannot work — and that is the point**
+The obvious cost win is a free judge: validate locally, spend nothing. Both local
+candidates were tested against ground truth — a claim Opus had ruled *overstated*
+("royal extravagance directly caused France's near-bankruptcy"; the fiscal crisis
+was driven by war debt, court spending being proportionally small), plus an
+uncontroversially true control.
+
+| candidate | known-false claim | control | verdict |
+|-----------|-------------------|---------|---------|
+| `ensemble-local` (8B) | **validated** it | validated | rubber stamp |
+| `gpt-oss-20b` (20.9B) | empty output | empty output | non-functional |
+
+The 8B validated the false claim *and* the true one. It says yes to everything —
+not a weak judge but a **non-judge**, with zero discriminating power. Wiring it in
+would have rubber-stamped errors into the master prompt with a validation ceremony
+attached, which is worse than no judge because it looks like one. The 20B returns
+an empty string even to "Reply with exactly: ready" while consuming 15.1GB of a
+16GB card.
+
+**This is the strongest available justification for the architecture.** Answering
+"what caused the French Revolution" is something an 8B model does passably.
+Deciding *which of two frontier answers is overstated, and why, against historical
+consensus* is a different and much harder job. The judge is a frontier model
+because there is a **capability floor** beneath which a judge stops judging and
+starts nodding — not because the best model was picked out of habit. Judging is the
+hardest task in this pipeline, not the cheapest.
+
+Corollary for stage 7: local answers cannot be validated locally, so there is
+nothing to gate them on. See "Local answers do not reach the master prompt".
+
 **Separate judge from council members**
 The comparison, validation, and consolidation steps use a distinct, higher-tier
 model (Opus 4.8) rather than reusing one of the answering models. The referee
@@ -163,6 +193,40 @@ should be at least as capable as those it judges. Originally all three "judge"
 roles reused the answering Claude model; separating them was a deliberate
 upgrade. All model IDs live in `core/clients.py` so the roles can be re-tuned in
 one place.
+
+**Local answers do not reach the master prompt**
+The knowledge loop is deliberately one-directional: only escalated queries persist.
+This looks like an omission — the local path answers questions and learns nothing
+from them — and it is not.
+
+`persist()` writes `validated`, which is what a council *disagreed on* and a judge
+*adjudicated*. That adjudication is what earns a fact its place. A local answer has
+no council, no judge, and no `validated` list: it is one 8B model's output, checked
+by nothing. And the master prompt primes **every future local answer**. So
+persisting it closes a loop where an unchecked claim primes the next answer, which
+produces the next unchecked claim:
+
+```
+8B writes an unchecked claim -> master prompt -> primes the next local answer
+                                     ^                        |
+                                     +------------------------+
+```
+
+Errors would not merely persist, they would compound. The escalate path earns
+persistence by surviving validation; the local path has not earned it. And a local
+judge cannot fix this — that was measured, see above: the 8B validates false claims
+as readily as true ones, so gating on it would add ceremony, not safety.
+
+It would also re-open the prompt-injection loop. With retrieval wired, persisting
+local answers gives: arXiv PDF → chroma → local system prompt → local answer →
+master prompt → **every future local answer, permanently**. The human gate is real,
+but a reviewer approving a plausible-sounding fact cannot tell which ones arrived
+via an injected paper.
+
+If this is revisited, the only version that makes sense is narrow: persist **only**
+answers grounded in retrieval, tagged with their source, so the human gate has
+something to actually review. Persisting to the log while never touching the master
+prompt is the safe middle — history without a feedback path.
 
 **Human-in-the-loop knowledge promotion**
 Validated facts are always logged, but promotion into the persistent master
